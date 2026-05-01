@@ -78,6 +78,11 @@ class AutoInputApp:
         self.file_btn = tk.Button(btn_frame, text="从文件加载", command=self.load_file,
                                   bg="#42A5F5", fg="white", **btn_style)
         self.file_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 提示标签
+        tip_label = tk.Label(btn_frame, text="单击鼠标自动停止", 
+                             fg="gray", font=("微软雅黑", 8))
+        tip_label.pack(side=tk.RIGHT, padx=5)
     
     def setup_shortcuts(self):
         """设置快捷键"""
