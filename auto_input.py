@@ -29,6 +29,7 @@ class AutoInputApp:
         self.full_text = ""
         self.pending_start_index = 0
         self.mouse_listener = None
+        self.last_file_path = None  # 记录上次加载的文件路径
         
         # 创建界面
         self.create_widgets()
@@ -47,6 +48,26 @@ class AutoInputApp:
         # 中部框架 - 状态信息
         mid_frame = tk.Frame(self.root)
         mid_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # 输入方式和速度选择
+        mode_frame = tk.Frame(mid_frame)
+        mode_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        tk.Label(mode_frame, text="输入方式:", font=("微软雅黑", 9)).pack(side=tk.LEFT)
+        
+        self.input_mode = tk.StringVar(value="clipboard")
+        
+        tk.Radiobutton(mode_frame, text="剪贴板模式(可输入中文)", variable=self.input_mode, 
+                       value="clipboard", font=("微软雅黑", 9)).pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(mode_frame, text="键盘模式", variable=self.input_mode, 
+                       value="keyboard", font=("微软雅黑", 9)).pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(mode_frame, text="速度:", font=("微软雅黑", 9)).pack(side=tk.LEFT, padx=(20, 5))
+        
+        self.speed_var = tk.StringVar(value="normal")
+        speed_combo = tk.OptionMenu(mode_frame, self.speed_var, "slow", "normal", "fast", "fastest")
+        speed_combo.config(font=("微软雅黑", 9), width=8)
+        speed_combo.pack(side=tk.LEFT)
         
         # 进度条
         self.progress_bar = tk.Canvas(mid_frame, height=20, bg="#e0e0e0", highlightthickness=0)
@@ -78,6 +99,10 @@ class AutoInputApp:
         self.file_btn = tk.Button(btn_frame, text="从文件加载", command=self.load_file,
                                   bg="#42A5F5", fg="white", **btn_style)
         self.file_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.refresh_btn = tk.Button(btn_frame, text="刷新文件", command=self.refresh_file,
+                                     bg="#78909C", fg="white", state=tk.DISABLED, **btn_style)
+        self.refresh_btn.pack(side=tk.LEFT, padx=5)
         
         # 提示标签
         tip_label = tk.Label(btn_frame, text="单击鼠标自动停止", 
@@ -161,9 +186,27 @@ class AutoInputApp:
         if content is not None:
             self.text_area.delete(1.0, tk.END)
             self.text_area.insert(tk.END, content)
+            self.last_file_path = filepath  # 记录文件路径
+            self.refresh_btn.config(state=tk.NORMAL)  # 启用刷新按钮
             self.status_label.config(text=f"已加载: {filepath.split('/')[-1]}", fg="green")
         else:
             messagebox.showerror("错误", "无法读取文件，编码格式不支持!")
+    
+    def refresh_file(self):
+        """刷新文件内容"""
+        if not self.last_file_path:
+            messagebox.showwarning("警告", "没有已加载的文件!")
+            return
+        
+        content = self._read_file_with_encoding(self.last_file_path)
+        
+        if content is not None:
+            # 保存当前滚动位置
+            self.text_area.delete(1.0, tk.END)
+            self.text_area.insert(tk.END, content)
+            self.status_label.config(text=f"已刷新: {self.last_file_path.split('/')[-1]}", fg="green")
+        else:
+            messagebox.showerror("错误", "无法读取文件!")
     
     def _read_file_with_encoding(self, filepath):
         """尝试多种编码读取文件"""
@@ -297,6 +340,17 @@ class AutoInputApp:
         """运行输入（在子线程中）"""
         old_clipboard = pyperclip.paste()
         total_len = len(self.full_text)
+        mode = self.input_mode.get()
+        speed = self.speed_var.get()
+        
+        # 根据速度设置延迟
+        delay_map = {
+            "slow": 0.1,
+            "normal": 0.05,
+            "fast": 0.02,
+            "fastest": 0.005
+        }
+        delay = delay_map.get(speed, 0.05)
         
         try:
             chars = list(self.full_text)
@@ -307,38 +361,27 @@ class AutoInputApp:
             while i < len(chars):
                 char = chars[i]
                 
-                # 跳过已输入的字符
                 if skip_count > 0:
                     skip_count -= 1
                     i += 1
                     continue
                 
-                # 输入字符
-                if char == '\n':
-                    pyautogui.press('enter')
-                elif char == '\t':
-                    pyautogui.press('tab')
-                elif char == ' ':
-                    pyautogui.press('space')
+                if mode == "clipboard":
+                    self._type_clipboard(char, delay)
                 else:
-                    pyperclip.copy(char)
-                    pyautogui.hotkey('ctrl', 'v')
-                    time.sleep(self.INPUT_DELAY)
+                    self._type_keyboard(char, delay)
                 
                 self.current_index += 1
                 i += 1
                 
-                # 第一个字符输入后启动监听器
                 if not first_char_input:
                     first_char_input = True
                     self.start_listeners()
                 
-                # 输入字符后再检查停止标志
                 if self.stop_flag:
                     self._save_state_and_exit(old_clipboard)
                     return
                 
-                # 更新进度（每10个字符更新一次）
                 if self.current_index % 10 == 0:
                     self.root.after(0, lambda idx=self.current_index: self.update_progress(idx, total_len))
             
@@ -357,6 +400,35 @@ class AutoInputApp:
         self.stop_listeners()
         self.root.after(0, self.stop_input)
         pyperclip.copy(old_clipboard)
+    
+    def _type_clipboard(self, char, delay=0.05):
+        """剪贴板模式输入"""
+        if char == '\n':
+            pyautogui.press('enter')
+        elif char == '\t':
+            pyautogui.press('tab')
+        elif char == ' ':
+            pyautogui.press('space')
+        else:
+            pyperclip.copy(char)
+            pyautogui.hotkey('ctrl', 'v')
+            time.sleep(delay)
+    
+    def _type_keyboard(self, char, delay=0.05):
+        """键盘模式输入"""
+        if char == '\n':
+            pyautogui.press('enter')
+        elif char == '\t':
+            pyautogui.press('tab')
+        elif char == ' ':
+            pyautogui.press('space')
+        else:
+            try:
+                pyautogui.press(char)
+            except:
+                pyperclip.copy(char)
+                pyautogui.hotkey('ctrl', 'v')
+            time.sleep(delay)
     
     def on_complete(self):
         """完成回调"""
